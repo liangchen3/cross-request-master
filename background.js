@@ -121,6 +121,12 @@ chrome.webRequest.onSendHeaders.addListener(
         if (details.requestHeaders && details.requestHeaders.length > 0) {
           const headersObj = {};
 
+          if (capturedHeadersMap.has(domain)) {
+           const oldHeadersObj= capturedHeadersMap.get(domain);
+           //把 oldHeadersObj 的值全部赋值给 headersObj
+            Object.assign(headersObj, oldHeadersObj);
+          }
+
           details.requestHeaders.forEach(header => {
             const headerName = header.name;
 
