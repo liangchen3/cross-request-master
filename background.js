@@ -189,6 +189,96 @@ chrome.webRequest.onSendHeaders.addListener(
 
 
 
+
+// ================== 拦截并存储所有 Request Headers ==================
+// 按域名存储捕获的headers
+const capturedHeadersMap = new Map();
+
+// 监听请求，捕获所有headers
+chrome.webRequest.onSendHeaders.addListener(
+    (details) => {
+      try {
+        const urlObj = new URL(details.url);
+        const domain = urlObj.hostname;
+
+        // 只捕获目标域名的headers（可以根据需要过滤）
+        if (details.requestHeaders && details.requestHeaders.length > 0) {
+          // 转换为对象格式
+          const headersObj = {};
+          details.requestHeaders.forEach(header => {
+            // 排除一些浏览器自动生成的header
+            const excludeHeaders = [
+              'host',
+              'content-length',
+              'connection',
+              'accept-encoding',
+              'sec-fetch-dest',
+              'sec-fetch-mode',
+              'sec-fetch-site',
+              'sec-fetch-user',
+              'sec-ch-ua',
+              'sec-ch-ua-mobile',
+              'sec-ch-ua-platform'
+            ];
+
+            if (!excludeHeaders.includes(header.name.toLowerCase())) {
+              headersObj[header.name] = header.value;
+            }
+          });
+
+          // 存储到Map中
+          capturedHeadersMap.set(domain, headersObj);
+
+          console.log(`[Background] 捕获到 ${domain} 的headers:`, headersObj);
+
+          // 持久化到storage（可选）
+          chrome.storage.local.set({
+            [`headers_${domain}`]: {
+              headers: headersObj,
+              timestamp: Date.now()
+            }
+          });
+        }
+      } catch (e) {
+        console.error('[Background] 解析URL或捕获headers失败:', e);
+      }
+    },
+    {
+      // 监听所有HTTP/HTTPS请求
+      urls: ['http://*/*', 'https://*/*'],
+      // 只监听XHR和fetch请求
+      types: ['xmlhttprequest']
+    },
+    ['requestHeaders', 'extraHeaders']
+);
+
+// 从storage恢复之前捕获的headers
+chrome.storage.local.get(null, (items) => {
+  Object.entries(items).forEach(([key, value]) => {
+    if (key.startsWith('headers_')) {
+      const domain = key.replace('headers_', '');
+      if (value.headers) {
+        capturedHeadersMap.set(domain, value.headers);
+      }
+    }
+  });
+  console.log('[Background] 已恢复捕获的headers，域名列表:',
+      Array.from(capturedHeadersMap.keys()));
+});
+
+// 提供API获取捕获的headers（用于调试）
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'getCapturedHeaders') {
+    sendResponse({
+      headers: Object.fromEntries(capturedHeadersMap),
+      count: capturedHeadersMap.size
+    });
+  }
+  return false;
+});
+// ================== 拦截代码结束 ==================
+
+
 let safeLogResponse = null;
 let sanitizeRequestHeaders = null;
 
