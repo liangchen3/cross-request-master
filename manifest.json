@@ -23,7 +23,10 @@
   },
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "cookies",
+    "webRequest",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>"
