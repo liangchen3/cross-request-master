@@ -1,4 +1,187 @@
 'use strict';
+// 按域名存储捕获的headers
+const capturedHeadersMap = new Map();
+// ================== 配置管理 开始 ==================
+let captureConfig = {
+  domains: {},
+  settings: {
+    autoInject: true,
+    enableLogging: true,
+    captureAll: true
+  }
+};
+
+// 加载配置
+chrome.storage.local.get(['crossRequestConfig'], (result) => {
+  if (result.crossRequestConfig) {
+    captureConfig = result.crossRequestConfig;
+    console.log('[Background] 已加载配置:', captureConfig);
+  }
+});
+
+// 监听配置更新
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local' && changes.crossRequestConfig) {
+    captureConfig = changes.crossRequestConfig.newValue;
+    console.log('[Background] 配置已更新:', captureConfig);
+  }
+});
+
+// 监听配置更新消息
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'configUpdated') {
+    chrome.storage.local.get(['crossRequestConfig'], (result) => {
+      if (result.crossRequestConfig) {
+        captureConfig = result.crossRequestConfig;
+        console.log('[Background] 配置已刷新');
+      }
+    });
+  }
+});
+
+// 检查域名是否应该捕获
+function shouldCaptureDomain(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+
+    // 检查是否匹配任何配置的域名
+    for (const domain of Object.keys(captureConfig.domains)) {
+      const domainConfig = captureConfig.domains[domain];
+
+      if (!domainConfig.enabled) continue;
+
+      // 完全匹配
+      if (hostname === domain) return true;
+
+      // 通配符匹配
+      if (domain.startsWith('*.')) {
+        const baseDomain = domain.substring(2);
+        if (hostname === baseDomain || hostname.endsWith('.' + baseDomain)) {
+          return true;
+        }
+      }
+    }
+
+    // 如果没有配置任何域名，默认捕获所有
+    return Object.keys(captureConfig.domains).length === 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 获取域名应该捕获的headers
+function getHeadersToCapture(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+
+    for (const domain of Object.keys(captureConfig.domains)) {
+      const domainConfig = captureConfig.domains[domain];
+
+      if (!domainConfig.enabled) continue;
+
+      // 完全匹配
+      if (hostname === domain) {
+        return domainConfig.headers || [];
+      }
+
+      // 通配符匹配
+      if (domain.startsWith('*.')) {
+        const baseDomain = domain.substring(2);
+        if (hostname === baseDomain || hostname.endsWith('.' + baseDomain)) {
+          return domainConfig.headers || [];
+        }
+      }
+    }
+
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+// ================== 配置管理结束 ==================
+
+
+// ================== 监听请求，捕获header 开始 ==================
+// 监听请求，捕获headers
+
+chrome.webRequest.onSendHeaders.addListener(
+    (details) => {
+      // 检查是否应该捕获这个域名
+      if (!shouldCaptureDomain(details.url)) return;
+
+      // 获取应该捕获的headers列表
+      const headersToCapture = getHeadersToCapture(details.url);
+
+      try {
+        const urlObj = new URL(details.url);
+        const domain = urlObj.hostname;
+
+        if (details.requestHeaders && details.requestHeaders.length > 0) {
+          const headersObj = {};
+
+          details.requestHeaders.forEach(header => {
+            const headerName = header.name;
+
+            // 如果配置了特定的headers，只捕获这些
+            if (headersToCapture.length > 0 && !headersToCapture.includes(headerName)) {
+              return;
+            }
+
+            // 排除浏览器自动生成的header
+            const excludeHeaders = [
+              'host',
+              'content-length',
+              'connection',
+              'accept-encoding',
+              'sec-fetch-dest',
+              'sec-fetch-mode',
+              'sec-fetch-site',
+              'sec-fetch-user',
+              'sec-ch-ua',
+              'sec-ch-ua-mobile',
+              'sec-ch-ua-platform'
+            ];
+
+            if (!excludeHeaders.includes(headerName.toLowerCase())) {
+              headersObj[headerName] = header.value;
+            }
+          });
+
+          if (Object.keys(headersObj).length > 0) {
+            capturedHeadersMap.set(domain, headersObj);
+
+            if (captureConfig.settings.enableLogging) {
+              console.log(`[Background] 捕获到 ${domain} 的headers:`, headersObj);
+            }
+
+            chrome.storage.local.set({
+              [`headers_${domain}`]: {
+                headers: headersObj,
+                timestamp: Date.now()
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.error('[Background] 捕获headers失败:', e);
+      }
+    },
+    {
+      urls: ['http://*/*', 'https://*/*'],
+      types: captureConfig.settings.captureAll
+          ? ['xmlhttprequest']
+          : ['xmlhttprequest']
+    },
+    ['requestHeaders', 'extraHeaders']
+);
+// ================== 监听请求，捕获header 结束 ==================
+
+
+
+
+
 
 let safeLogResponse = null;
 let sanitizeRequestHeaders = null;
@@ -254,6 +437,94 @@ async function handleCrossOriginRequest(request) {
     mode: 'cors',
     credentials: 'include'
   };
+
+
+
+//   // ================== 添加获取 Cookie 的代码  start ==================
+// // 自动获取并注入目标网站的 Cookie
+//   try {
+//     console.log('[Background] 准备获取 Cookie，URL:', url);
+//
+//     // 获取目标 URL 的所有 Cookie（包括 HttpOnly）
+//     const cookies = await chrome.cookies.getAll({ url: url });
+//
+//     console.log('[Background] 获取到 Cookie 数量:', cookies.length);
+//
+//     // 拼接 Cookie 字符串
+//     const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+//
+//     // 注入到请求头
+//     if (cookieString) {
+//       fetchOptions.headers.set('Cookie', cookieString);
+//       console.log('[Background] 已注入 Cookie:', cookieString);
+//     }
+//   } catch (cookieError) {
+//     console.warn('[Background] 获取 Cookie 失败:', cookieError);
+//     // 即使获取失败也继续发送请求
+//   }
+//
+//   fetchOptions.headers.set('Authorization', 'Bearer 6bfbe4ab0705426bbf26fe9106cbdf76');
+//   fetchOptions.headers.set('tenant-id', '166');
+//   console.log('[Background] 已注入硬编码的 Authorization');
+// // ================== 添加获取 Cookie 的代码  end ==================
+
+
+
+  // ================== 自动注入捕获的Headers ==================
+  try {
+    const urlObj = new URL(url);
+    const targetDomain = urlObj.hostname;
+
+    console.log('[Background] 准备注入headers，目标域名:', targetDomain);
+
+    // 查找匹配的headers（完全匹配或父域名）
+    let capturedHeaders = capturedHeadersMap.get(targetDomain);
+
+    // 如果没有找到，尝试查找父域名
+    if (!capturedHeaders) {
+      const parts = targetDomain.split('.');
+      for (let i = 1; i < parts.length; i++) {
+        const parentDomain = parts.slice(i).join('.');
+        capturedHeaders = capturedHeadersMap.get(parentDomain);
+        if (capturedHeaders) {
+          console.log(`[Background] 使用父域名 ${parentDomain} 的headers`);
+          break;
+        }
+      }
+    }
+
+    // 注入headers
+    if (capturedHeaders) {
+      const injectedHeaders = [];
+
+      Object.entries(capturedHeaders).forEach(([key, value]) => {
+        // 跳过一些不能手动设置的header
+        const forbiddenHeaders = [
+          'host',
+          'origin',
+          'referer',
+          'user-agent',
+          'cookie',
+          'content-length',
+          'accept-encoding',
+          'connection'
+        ];
+
+        if (!forbiddenHeaders.includes(key.toLowerCase())) {
+          fetchOptions.headers.set(key, value);
+          injectedHeaders.push(key);
+        }
+      });
+
+      console.log(`[Background] 已注入 ${injectedHeaders.length} 个headers:`, injectedHeaders);
+      console.log('[Background] 完整headers:', Object.fromEntries(fetchOptions.headers.entries()));
+    } else {
+      console.log(`[Background] 未找到 ${targetDomain} 的捕获headers`);
+    }
+  } catch (error) {
+    console.error('[Background] 注入headers失败:', error);
+  }
+// ================== 注入代码结束 ==================
 
   // multipart/form-data 让浏览器自动设置 boundary，移除手动 Content-Type
   if (isMultipartBody) {
