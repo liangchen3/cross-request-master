@@ -10,6 +10,7 @@
 - `packages/yapi-mcp` — CLI / Skill（发布包名保持为 `@leeguoo/yapi-mcp`，MCP 配置作为兼容方案保留，不影响扩展打包）
 - `plugins/yapi-plugin` — Cursor 与 Claude Code 插件（已从原独立仓库 `leeguooooo/yapi-plugin` 归档并整合回本仓库）
 
+
 当前推荐安装链路是 `npx skills add leeguooooo/cross-request-master -y -g` 安装 Skill，再用 `yapi config init` 初始化 `~/.yapi/config.toml`。`yapi-mcp` 已支持浏览器登录同步 Cookie（`yapi login --browser`），可用于仅支持 SSO/无法账号密码登录的 YApi 场景。
 
 
