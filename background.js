@@ -1,6 +1,4 @@
 'use strict';
-// 按域名存储捕获的headers
-const capturedHeadersMap = new Map();
 // ================== 配置管理 开始 ==================
 let captureConfig = {
   domains: {},
@@ -63,12 +61,13 @@ function shouldCaptureDomain(url) {
       }
     }
 
-    // 如果没有配置任何域名，默认捕获所有
-    return Object.keys(captureConfig.domains).length === 0;
+    // 如果没有配置任何域名，默认不捕获
+    return false;
   } catch (e) {
     return false;
   }
 }
+
 
 // 获取域名应该捕获的headers
 function getHeadersToCapture(url) {
@@ -83,14 +82,14 @@ function getHeadersToCapture(url) {
 
       // 完全匹配
       if (hostname === domain) {
-        return domainConfig.headers || [];
+        return toLowerCase4Headers(domainConfig.headers) || [];
       }
 
       // 通配符匹配
       if (domain.startsWith('*.')) {
         const baseDomain = domain.substring(2);
         if (hostname === baseDomain || hostname.endsWith('.' + baseDomain)) {
-          return domainConfig.headers || [];
+          return toLowerCase4Headers(domainConfig.headers) || [];
         }
       }
     }
@@ -100,12 +99,18 @@ function getHeadersToCapture(url) {
     return [];
   }
 }
+
+function toLowerCase4Headers(headers) {
+  return headers.map(header => header.toLowerCase());
+}
+
 // ================== 配置管理结束 ==================
 
 
 // ================== 监听请求，捕获header 开始 ==================
 // 监听请求，捕获headers
-
+// 按域名存储捕获的headers
+const capturedHeadersMap = new Map();
 chrome.webRequest.onSendHeaders.addListener(
     (details) => {
       // 检查是否应该捕获这个域名
@@ -121,46 +126,17 @@ chrome.webRequest.onSendHeaders.addListener(
         if (details.requestHeaders && details.requestHeaders.length > 0) {
           const headersObj = {};
 
-          if (capturedHeadersMap.has(domain)) {
-           const oldHeadersObj= capturedHeadersMap.get(domain);
-           //把 oldHeadersObj 的值全部赋值给 headersObj
-            Object.assign(headersObj, oldHeadersObj);
-          }
-
           details.requestHeaders.forEach(header => {
             const headerName = header.name;
 
             // 如果配置了特定的headers，只捕获这些
-            if (headersToCapture.length > 0 && !headersToCapture.includes(headerName)) {
-              return;
-            }
-
-            // 排除浏览器自动生成的header
-            const excludeHeaders = [
-              'host',
-              'content-length',
-              'connection',
-              'accept-encoding',
-              'sec-fetch-dest',
-              'sec-fetch-mode',
-              'sec-fetch-site',
-              'sec-fetch-user',
-              'sec-ch-ua',
-              'sec-ch-ua-mobile',
-              'sec-ch-ua-platform'
-            ];
-
-            if (!excludeHeaders.includes(headerName.toLowerCase())) {
+            if (headersToCapture.length > 0 && headersToCapture.includes(headerName.toLowerCase())) {
               headersObj[headerName] = header.value;
             }
           });
 
           if (Object.keys(headersObj).length > 0) {
             capturedHeadersMap.set(domain, headersObj);
-
-            if (captureConfig.settings.enableLogging) {
-              console.log(`[Background] 捕获到 ${domain} 的headers:`, headersObj);
-            }
 
             chrome.storage.local.set({
               [`headers_${domain}`]: {
@@ -182,75 +158,7 @@ chrome.webRequest.onSendHeaders.addListener(
     },
     ['requestHeaders', 'extraHeaders']
 );
-// ================== 监听请求，捕获header 结束 ==================
 
-
-
-
-
-
-
-// ================== 拦截并存储所有 Request Headers ==================
-// 按域名存储捕获的headers
-const capturedHeadersMap = new Map();
-
-// 监听请求，捕获所有headers
-chrome.webRequest.onSendHeaders.addListener(
-    (details) => {
-      try {
-        const urlObj = new URL(details.url);
-        const domain = urlObj.hostname;
-
-        // 只捕获目标域名的headers（可以根据需要过滤）
-        if (details.requestHeaders && details.requestHeaders.length > 0) {
-          // 转换为对象格式
-          const headersObj = {};
-          details.requestHeaders.forEach(header => {
-            // 排除一些浏览器自动生成的header
-            const excludeHeaders = [
-              'host',
-              'content-length',
-              'connection',
-              'accept-encoding',
-              'sec-fetch-dest',
-              'sec-fetch-mode',
-              'sec-fetch-site',
-              'sec-fetch-user',
-              'sec-ch-ua',
-              'sec-ch-ua-mobile',
-              'sec-ch-ua-platform'
-            ];
-
-            if (!excludeHeaders.includes(header.name.toLowerCase())) {
-              headersObj[header.name] = header.value;
-            }
-          });
-
-          // 存储到Map中
-          capturedHeadersMap.set(domain, headersObj);
-
-          console.log(`[Background] 捕获到 ${domain} 的headers:`, headersObj);
-
-          // 持久化到storage（可选）
-          chrome.storage.local.set({
-            [`headers_${domain}`]: {
-              headers: headersObj,
-              timestamp: Date.now()
-            }
-          });
-        }
-      } catch (e) {
-        console.error('[Background] 解析URL或捕获headers失败:', e);
-      }
-    },
-    {
-      // 监听所有HTTP/HTTPS请求
-      urls: ['http://*/*', 'https://*/*'],
-      // 只监听XHR和fetch请求
-      types: ['xmlhttprequest']
-    },
-    ['requestHeaders', 'extraHeaders']
-);
 
 // 从storage恢复之前捕获的headers
 chrome.storage.local.get(null, (items) => {
@@ -276,7 +184,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   return false;
 });
-// ================== 拦截代码结束 ==================
+// ================== 监听请求，捕获header 结束 ==================
+
+
 
 
 let safeLogResponse = null;
